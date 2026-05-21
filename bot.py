@@ -1,4 +1,3 @@
-@"
 import asyncio, os
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
@@ -16,7 +15,7 @@ client = AsyncOpenAI(
     base_url="https://api.groq.com/openai/v1"
 )
 
-MODEL = "llama-3.1-8b-instant"  # быстрая и бесплатная модель Groq
+MODEL = "llama-3.1-8b-instant"
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
@@ -65,4 +64,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-"@ | Out-File -FilePath bot.py -Encoding utf8
