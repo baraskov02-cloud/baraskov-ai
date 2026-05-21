@@ -4,7 +4,9 @@ from openai import AsyncOpenAI
 from aiogram import Bot, Dispatcher, types
 from aiogram.types import InlineQueryResultArticle, InputTextMessageContent
 from aiogram.filters import Command
+from aiogram import BaseMiddleware
 from aiogram import F
+from collections import defaultdict
 
 load_dotenv()
 TOKEN = os.getenv("BOT_TOKEN")
@@ -19,6 +21,34 @@ MODEL = "llama-3.1-8b-instant"
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
+
+# ========== АНТИ-СПАМ: НАЧАЛО ==========
+# Словарь для хранения времени последнего сообщения для каждого пользователя
+user_last_message_time = defaultdict(int)
+
+class AntiSpamMiddleware(BaseMiddleware):
+    """
+    Простая защита от спама: 
+    обрабатывает только текстовые сообщения и пропускает команды (например, /start).
+    """
+    async def __call__(self, handler, event, data):
+        if event.from_user is None:
+            return await handler(event, data)
+
+        current_time = asyncio.get_event_loop().time()
+        user_id = event.from_user.id
+        last_time = user_last_message_time.get(user_id, 0)
+        
+        # Проверка для сообщений: если прошло меньше 1 секунды
+        if hasattr(event, 'text') and current_time - last_time < 1:
+            return None  # Блокируем спам
+
+        user_last_message_time[user_id] = current_time
+        return await handler(event, data)
+
+# Подключаем middleware
+dp.message.middleware(AntiSpamMiddleware())
+# ========== АНТИ-СПАМ: КОНЕЦ ==========
 
 async def ask_ai(q):
     try:
