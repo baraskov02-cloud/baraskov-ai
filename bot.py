@@ -15,7 +15,7 @@ client = AsyncOpenAI(
     base_url="https://openrouter.ai/api/v1"
 )
 
-MODEL = "google/gemini-2.0-flash-001"  # бесплатная модель
+MODEL = "google/gemini-2.0-flash-001:free"  # бесплатная модель
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
