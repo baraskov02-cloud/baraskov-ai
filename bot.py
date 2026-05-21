@@ -5,17 +5,17 @@ from aiogram.types import InlineQueryResultArticle, InputTextMessageContent
 from aiogram.filters import Command
 from aiogram import F
 
-# ---------- Токены вшиты напрямую (тест) ----------
+# ---------- Токены вшиты напрямую ----------
 TOKEN = "8788937942:AAG8dVIgBWt9h0zr_uXWyWKkEik0uiDPrwA"
-API_KEY = "sk-NEty6mpeTIW7PY5NEoUG4wLNDMgBhyW9RdJsJ7fXFSkveC7B"
-# ----------------------------------------------------
+API_KEY = "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"
+# -------------------------------------------
 
 client = AsyncOpenAI(
     api_key=API_KEY,
     base_url="https://openrouter.ai/api/v1"
 )
 
-MODEL = "google/gemini-2.0-flash-001:free"
+MODEL = "meta-llama/llama-3.2-3b-instruct:free"  # бесплатная модель
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
@@ -37,7 +37,7 @@ async def ask_ai(q):
 
 @dp.message(Command("start"))
 async def start_cmd(m: types.Message):
-    await m.answer("Привет! Я AI-помощник от ОАО. Тест с хардкодом 🤖")
+    await m.answer("Привет! Я AI-помощник от ОАО. Сейчас на бесплатной модели Llama 🤖")
 
 @dp.message(F.text)
 async def handle(m: types.Message):
