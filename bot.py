@@ -1,21 +1,21 @@
 import asyncio, os
-from dotenv import load_dotenv
 from openai import AsyncOpenAI
 from aiogram import Bot, Dispatcher, types
 from aiogram.types import InlineQueryResultArticle, InputTextMessageContent
 from aiogram.filters import Command
 from aiogram import F
 
-load_dotenv()
-TOKEN = os.getenv("BOT_TOKEN")
-API_KEY = os.getenv("OPENROUTER_API_KEY")
+# ---------- Токены вшиты напрямую (тест) ----------
+TOKEN = "8788937942:AAG8dVIgBWt9h0zr_uXWyWKkEik0uiDPrwA"
+API_KEY = "sk-NEty6mpeTIW7PY5NEoUG4wLNDMgBhyW9RdJsJ7fXFSkveC7B"
+# ----------------------------------------------------
 
 client = AsyncOpenAI(
     api_key=API_KEY,
     base_url="https://openrouter.ai/api/v1"
 )
 
-MODEL = "google/gemini-2.0-flash-001:free"  # бесплатная модель
+MODEL = "google/gemini-2.0-flash-001:free"
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
@@ -37,7 +37,7 @@ async def ask_ai(q):
 
 @dp.message(Command("start"))
 async def start_cmd(m: types.Message):
-    await m.answer("Привет! Я AI-помощник от ОАО. Сейчас на бесплатном Gemini через OpenRouter 🤖")
+    await m.answer("Привет! Я AI-помощник от ОАО. Тест с хардкодом 🤖")
 
 @dp.message(F.text)
 async def handle(m: types.Message):
