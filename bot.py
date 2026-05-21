@@ -8,15 +8,22 @@ from aiogram import F
 
 load_dotenv()
 TOKEN = os.getenv("BOT_TOKEN")
-DEEPSEEK_KEY = os.getenv("DEEPSEEK_API_KEY")
-client = AsyncOpenAI(api_key=DEEPSEEK_KEY, base_url="https://api.deepseek.com")
+API_KEY = os.getenv("OPENROUTER_API_KEY")
+
+client = AsyncOpenAI(
+    api_key=API_KEY,
+    base_url="https://openrouter.ai/api/v1"
+)
+
+MODEL = "google/gemini-2.0-flash-001"  # бесплатная модель
+
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
-async def ask_deepseek(q):
+async def ask_ai(q):
     try:
         r = await client.chat.completions.create(
-            model="deepseek-chat",
+            model=MODEL,
             messages=[
                 {"role": "system", "content": "Ты — AI-ассистент, отвечай развёрнуто и дружелюбно."},
                 {"role": "user", "content": q}
@@ -30,12 +37,12 @@ async def ask_deepseek(q):
 
 @dp.message(Command("start"))
 async def start_cmd(m: types.Message):
-    await m.answer("Привет! Я AI-помощник от ОАО. Задавай любой вопрос.")
+    await m.answer("Привет! Я AI-помощник от ОАО. Сейчас на бесплатном Gemini через OpenRouter 🤖")
 
 @dp.message(F.text)
 async def handle(m: types.Message):
     wait = await m.answer("ЩА ДРУГ ПОГОДИ СЕКУНДУ...")
-    ans = await ask_deepseek(m.text)
+    ans = await ask_ai(m.text)
     await wait.edit_text(ans)
 
 @dp.inline_query()
@@ -46,7 +53,7 @@ async def inline(q: types.InlineQuery):
               input_message_content=InputTextMessageContent(message_text="Напишите вопрос после @aiOAO_bot"))]
         await q.answer(r, cache_time=1)
         return
-    ans = await ask_deepseek(txt)
+    ans = await ask_ai(txt)
     r = [InlineQueryResultArticle(id="1", title=txt[:50], description=ans[:100],
           input_message_content=InputTextMessageContent(message_text=ans))]
     await q.answer(r, cache_time=10)
