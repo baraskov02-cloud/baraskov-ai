@@ -1,3 +1,4 @@
+@"
 import asyncio, os
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
@@ -8,12 +9,14 @@ from aiogram import F
 
 load_dotenv()
 TOKEN = os.getenv("BOT_TOKEN")
-# Внимание: переменная теперь OPENAI_API_KEY
-API_KEY = os.getenv("OPENAI_API_KEY")
+GROQ_KEY = os.getenv("GROQ_API_KEY")
 
-client = AsyncOpenAI(api_key=API_KEY)
+client = AsyncOpenAI(
+    api_key=GROQ_KEY,
+    base_url="https://api.groq.com/openai/v1"
+)
 
-MODEL = "gpt-3.5-turbo"
+MODEL = "llama-3.1-8b-instant"  # быстрая и бесплатная модель Groq
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
@@ -35,7 +38,7 @@ async def ask_ai(q):
 
 @dp.message(Command("start"))
 async def start_cmd(m: types.Message):
-    await m.answer("Привет! Я AI-помощник от ОАО. Теперь на OpenAI 🤖")
+    await m.answer("Привет! Я AI-помощник от ОАО. Теперь на Groq 🤖")
 
 @dp.message(F.text)
 async def handle(m: types.Message):
@@ -62,3 +65,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+"@ | Out-File -FilePath bot.py -Encoding utf8
