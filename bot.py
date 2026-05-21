@@ -1,12 +1,11 @@
-import asyncio, os
+import asyncio, os, time
+from collections import defaultdict
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
-from aiogram import Bot, Dispatcher, types
+from aiogram import Bot, Dispatcher, types, BaseMiddleware
 from aiogram.types import InlineQueryResultArticle, InputTextMessageContent
 from aiogram.filters import Command
-from aiogram import BaseMiddleware
 from aiogram import F
-from collections import defaultdict
 
 load_dotenv()
 TOKEN = os.getenv("BOT_TOKEN")
@@ -22,33 +21,36 @@ MODEL = "llama-3.1-8b-instant"
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
-# ========== АНТИ-СПАМ: НАЧАЛО ==========
-# Словарь для хранения времени последнего сообщения для каждого пользователя
-user_last_message_time = defaultdict(int)
+# ========== АНТИ-СПАМ 2.0 ==========
+# Храним для каждого пользователя список времени последних сообщений
+user_messages_timestamps = defaultdict(list)
+MAX_MESSAGES = 3      # максимум сообщений
+TIME_WINDOW = 5       # за последние 5 секунд
 
-class AntiSpamMiddleware(BaseMiddleware):
-    """
-    Простая защита от спама: 
-    обрабатывает только текстовые сообщения и пропускает команды (например, /start).
-    """
+class RateLimitMiddleware(BaseMiddleware):
     async def __call__(self, handler, event, data):
-        if event.from_user is None:
+        # Работает только для текстовых сообщений
+        if not hasattr(event, 'text'):
             return await handler(event, data)
 
-        current_time = asyncio.get_event_loop().time()
         user_id = event.from_user.id
-        last_time = user_last_message_time.get(user_id, 0)
-        
-        # Проверка для сообщений: если прошло меньше 1 секунды
-        if hasattr(event, 'text') and current_time - last_time < 1:
-            return None  # Блокируем спам
+        now = time.time()
+        timestamps = user_messages_timestamps[user_id]
 
-        user_last_message_time[user_id] = current_time
+        # Удаляем старые записи (старше TIME_WINDOW)
+        timestamps = [t for t in timestamps if now - t < TIME_WINDOW]
+        user_messages_timestamps[user_id] = timestamps
+
+        # Если лимит превышен — игнорируем сообщение
+        if len(timestamps) >= MAX_MESSAGES:
+            return None
+
+        # Запоминаем текущее время и пропускаем запрос
+        timestamps.append(now)
         return await handler(event, data)
 
-# Подключаем middleware
-dp.message.middleware(AntiSpamMiddleware())
-# ========== АНТИ-СПАМ: КОНЕЦ ==========
+dp.message.middleware(RateLimitMiddleware())
+# =====================================
 
 async def ask_ai(q):
     try:
@@ -67,7 +69,7 @@ async def ask_ai(q):
 
 @dp.message(Command("start"))
 async def start_cmd(m: types.Message):
-    await m.answer("Привет! Я AI-помощник от ОАО. Теперь на Groq 🤖")
+    await m.answer("Привет! Я AI-помощник от ОАО. Теперь с защитой от спама 🛡️")
 
 @dp.message(F.text)
 async def handle(m: types.Message):
