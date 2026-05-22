@@ -86,6 +86,15 @@ def active_chat_keyboard():
     )
     return builder.as_markup()
 
+def after_answer_keyboard():
+    """Кнопки после каждого ответа ИИ"""
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(text="⏹ Завершить чат", callback_data="end_chat"),
+        InlineKeyboardButton(text="📁 Мои чаты", callback_data="my_chats")
+    )
+    return builder.as_markup()
+
 # ========== AI (только текст) ==========
 async def ask_ai_text(chat, question):
     try:
@@ -175,16 +184,37 @@ async def cb_view_chat(call: types.CallbackQuery):
     if not chat:
         await call.answer("Чат не найден")
         return
+
     msgs = chat["messages"]
     if not msgs:
         await call.answer("Чат пуст")
         return
+
+    # Отправляем историю чата
     await call.message.answer(f"📜 Чат {chat_id} от {chat['created_at']}:")
     for i in range(0, len(msgs), 3):
         chunk = msgs[i:i+3]
         text = "\n\n".join([f"{'👤' if m['role']=='user' else '🤖'}: {m['content'][:500]}" for m in chunk])
         await call.message.answer(text)
-    await call.message.answer("Конец истории.", reply_markup=main_menu_keyboard())
+
+    # Кнопки: удалить чат и назад
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(text="🗑 Удалить чат", callback_data=f"delete_chat_{chat_id}"),
+        InlineKeyboardButton(text="🔙 Назад", callback_data="my_chats")
+    )
+    await call.message.answer("Действия:", reply_markup=builder.as_markup())
+
+@dp.callback_query(F.data.startswith("delete_chat_"))
+async def cb_delete_chat(call: types.CallbackQuery):
+    user_id = call.from_user.id
+    chat_id = call.data.split("delete_chat_")[1]
+    # Удаляем чат из списка
+    user_chats[user_id] = [c for c in user_chats[user_id] if c["id"] != chat_id]
+    # Если чат был активным, убираем
+    if active_chat.get(user_id) == chat_id:
+        active_chat.pop(user_id, None)
+    await call.message.edit_text(f"🗑 Чат {chat_id} удалён.", reply_markup=main_menu_keyboard())
 
 @dp.callback_query(F.data == "back_to_menu")
 async def cb_back_to_menu(call: types.CallbackQuery):
@@ -206,7 +236,8 @@ async def handle_text(m: types.Message):
         return
     wait = await m.answer("ЩА ДРУГ ПОГОДИ СЕКУНДУ...")
     ans = await ask_ai_text(chat, m.text)
-    await wait.edit_text(ans)
+    # Заменяем сообщение ожидания на ответ с кнопками
+    await wait.edit_text(ans, reply_markup=after_answer_keyboard())
 
 # ========== INLINE ==========
 @dp.inline_query()
