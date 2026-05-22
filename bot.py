@@ -1,6 +1,6 @@
-import asyncio, os, time, uuid
+import asyncio, os, time, uuid, re
+from datetime import datetime, timedelta
 from collections import defaultdict
-from datetime import datetime
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
 from aiogram import Bot, Dispatcher, types, BaseMiddleware
@@ -69,12 +69,20 @@ def get_chat_history(chat):
 def add_message_to_chat(chat, role, content):
     chat["messages"].append({"role": role, "content": content})
 
+# ========== ХРАНИЛИЩЕ НАПОМИНАНИЙ ==========
+# reminders[user_id] = список словарей: {'id': int, 'time': datetime, 'text': str}
+reminders = defaultdict(list)
+reminder_counter = 1  # для нумерации напоминаний
+
 # ========== КНОПКИ ==========
 def main_menu_keyboard():
     builder = InlineKeyboardBuilder()
     builder.row(
         InlineKeyboardButton(text="💬 Новый чат", callback_data="new_chat"),
         InlineKeyboardButton(text="📁 Мои чаты", callback_data="my_chats")
+    )
+    builder.row(
+        InlineKeyboardButton(text="⏰ Напоминания", callback_data="reminders")
     )
     return builder.as_markup()
 
@@ -87,7 +95,6 @@ def active_chat_keyboard():
     return builder.as_markup()
 
 def after_answer_keyboard():
-    """Кнопки после каждого ответа ИИ"""
     builder = InlineKeyboardBuilder()
     builder.row(
         InlineKeyboardButton(text="⏹ Завершить чат", callback_data="end_chat"),
@@ -116,11 +123,28 @@ async def ask_ai_text(chat, question):
     except Exception as e:
         return f"Ошибка: {e}"
 
+# ========== ПРОВЕРКА НАПОМИНАНИЙ (фоновый таск) ==========
+async def reminder_checker():
+    while True:
+        now = datetime.now()
+        for user_id, user_reminders in list(reminders.items()):
+            for rem in user_reminders[:]:
+                if rem['time'] <= now:
+                    try:
+                        await bot.send_message(
+                            user_id,
+                            f"🔔 Напоминание:\n{rem['text']}"
+                        )
+                    except:
+                        pass  # если пользователь заблокировал бота
+                    user_reminders.remove(rem)
+        await asyncio.sleep(30)  # проверять каждые 30 секунд
+
 # ========== ОБРАБОТЧИКИ КОМАНД ==========
 @dp.message(Command("start"))
 async def start_cmd(m: types.Message):
     await m.answer(
-        "👋 Привет! Я AI-помощник с историей чатов.\n"
+        "👋 Привет! Я AI-помощник с историей чатов и напоминаниями.\n"
         "Используй кнопки ниже для управления.",
         reply_markup=main_menu_keyboard()
     )
@@ -128,6 +152,80 @@ async def start_cmd(m: types.Message):
 @dp.message(Command("menu"))
 async def menu_cmd(m: types.Message):
     await start_cmd(m)
+
+@dp.message(Command("remind"))
+async def remind_cmd(m: types.Message):
+    global reminder_counter
+    user_id = m.from_user.id
+    # Формат: /remind 17:00 текст
+    args = m.text.strip().split(maxsplit=2)
+    if len(args) < 3:
+        await m.answer(
+            "❌ Неверный формат.\n"
+            "Пример: `/remind 17:00 Купить хлеб`\n"
+            "Время в формате ЧЧ:ММ, текст — обязательно.",
+            parse_mode="Markdown"
+        )
+        return
+    time_str = args[1]
+    text = args[2]
+    # Парсим время
+    try:
+        hour, minute = map(int, time_str.split(':'))
+        if not (0 <= hour <= 23 and 0 <= minute <= 59):
+            raise ValueError
+    except:
+        await m.answer("❌ Неверный формат времени. Используй ЧЧ:ММ, например 17:00.")
+        return
+
+    now = datetime.now()
+    reminder_time = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if reminder_time <= now:
+        reminder_time += timedelta(days=1)  # если время уже прошло, ставим на завтра
+
+    rem_id = reminder_counter
+    reminder_counter += 1
+    reminders[user_id].append({
+        'id': rem_id,
+        'time': reminder_time,
+        'text': text
+    })
+    await m.answer(
+        f"✅ Напоминание №{rem_id} установлено на {reminder_time.strftime('%H:%M')}:\n"
+        f"«{text}»"
+    )
+
+@dp.message(Command("myreminds"))
+async def myreminds_cmd(m: types.Message):
+    user_id = m.from_user.id
+    if not reminders[user_id]:
+        await m.answer("У вас нет активных напоминаний.")
+        return
+    msg_lines = ["📋 **Ваши напоминания:**"]
+    for rem in reminders[user_id]:
+        msg_lines.append(f"№{rem['id']} — {rem['time'].strftime('%H:%M')} — {rem['text']}")
+    msg_lines.append("\nУдалить: `/delremind НОМЕР`")
+    await m.answer("\n".join(msg_lines), parse_mode="Markdown")
+
+@dp.message(Command("delremind"))
+async def delremind_cmd(m: types.Message):
+    user_id = m.from_user.id
+    args = m.text.strip().split()
+    if len(args) < 2:
+        await m.answer("Укажите номер напоминания: `/delremind 1`", parse_mode="Markdown")
+        return
+    try:
+        num = int(args[1])
+    except:
+        await m.answer("Номер должен быть числом.")
+        return
+    before = len(reminders[user_id])
+    reminders[user_id] = [r for r in reminders[user_id] if r['id'] != num]
+    after = len(reminders[user_id])
+    if before == after:
+        await m.answer(f"Напоминание №{num} не найдено.")
+    else:
+        await m.answer(f"🗑 Напоминание №{num} удалено.")
 
 # ========== CALLBACK-ОБРАБОТЧИКИ ==========
 @dp.callback_query(F.data == "new_chat")
@@ -176,6 +274,19 @@ async def cb_my_chats(call: types.CallbackQuery):
     builder.row(InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_menu"))
     await call.message.edit_text("📁 Ваши чаты:", reply_markup=builder.as_markup())
 
+@dp.callback_query(F.data == "reminders")
+async def cb_reminders(call: types.CallbackQuery):
+    await call.message.edit_text(
+        "⏰ **Напоминания**\n\n"
+        "• Создать: `/remind 17:00 Купить хлеб`\n"
+        "• Посмотреть: `/myreminds`\n"
+        "• Удалить: `/delremind НОМЕР`",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardBuilder()
+            .row(InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_menu"))
+            .as_markup()
+    )
+
 @dp.callback_query(F.data.startswith("view_chat_"))
 async def cb_view_chat(call: types.CallbackQuery):
     user_id = call.from_user.id
@@ -184,20 +295,15 @@ async def cb_view_chat(call: types.CallbackQuery):
     if not chat:
         await call.answer("Чат не найден")
         return
-
     msgs = chat["messages"]
     if not msgs:
         await call.answer("Чат пуст")
         return
-
-    # Отправляем историю чата
     await call.message.answer(f"📜 Чат {chat_id} от {chat['created_at']}:")
     for i in range(0, len(msgs), 3):
         chunk = msgs[i:i+3]
         text = "\n\n".join([f"{'👤' if m['role']=='user' else '🤖'}: {m['content'][:500]}" for m in chunk])
         await call.message.answer(text)
-
-    # Кнопки: удалить чат и назад
     builder = InlineKeyboardBuilder()
     builder.row(
         InlineKeyboardButton(text="🗑 Удалить чат", callback_data=f"delete_chat_{chat_id}"),
@@ -209,9 +315,7 @@ async def cb_view_chat(call: types.CallbackQuery):
 async def cb_delete_chat(call: types.CallbackQuery):
     user_id = call.from_user.id
     chat_id = call.data.split("delete_chat_")[1]
-    # Удаляем чат из списка
     user_chats[user_id] = [c for c in user_chats[user_id] if c["id"] != chat_id]
-    # Если чат был активным, убираем
     if active_chat.get(user_id) == chat_id:
         active_chat.pop(user_id, None)
     await call.message.edit_text(f"🗑 Чат {chat_id} удалён.", reply_markup=main_menu_keyboard())
@@ -236,7 +340,6 @@ async def handle_text(m: types.Message):
         return
     wait = await m.answer("ЩА ДРУГ ПОГОДИ СЕКУНДУ...")
     ans = await ask_ai_text(chat, m.text)
-    # Заменяем сообщение ожидания на ответ с кнопками
     await wait.edit_text(ans, reply_markup=after_answer_keyboard())
 
 # ========== INLINE ==========
@@ -266,6 +369,8 @@ async def inline(q: types.InlineQuery):
     await q.answer([result], cache_time=10)
 
 async def main():
+    # Запускаем фоновую проверку напоминаний
+    asyncio.create_task(reminder_checker())
     await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
 
