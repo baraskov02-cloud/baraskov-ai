@@ -1,4 +1,4 @@
-import asyncio, os, time, base64, uuid
+import asyncio, os, time, uuid
 from collections import defaultdict
 from datetime import datetime
 from dotenv import load_dotenv
@@ -22,7 +22,6 @@ client = AsyncOpenAI(
 )
 
 TEXT_MODEL = "llama-3.1-8b-instant"
-VISION_MODEL = "llama-3.2-11b-vision-preview"
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
@@ -49,15 +48,8 @@ class RateLimitMiddleware(BaseMiddleware):
 dp.message.middleware(RateLimitMiddleware())
 
 # ========== ХРАНИЛИЩЕ ЧАТОВ ==========
-# Структура: user_chats[user_id] = список чатов
-# Каждый чат: {
-#   "id": str uuid,
-#   "created_at": datetime,
-#   "messages": [{"role": "user"/"assistant", "content": str}],
-#   "active": bool
-# }
 user_chats = defaultdict(list)
-active_chat = {}  # user_id -> chat_id (строка) активного чата
+active_chat = {}
 
 def get_chat_by_id(user_id, chat_id):
     for c in user_chats[user_id]:
@@ -72,7 +64,6 @@ def get_active_chat(user_id):
     return get_chat_by_id(user_id, chat_id)
 
 def get_chat_history(chat):
-    """Возвращает список сообщений в формате OpenAI"""
     return [{"role": msg["role"], "content": msg["content"]} for msg in chat["messages"]]
 
 def add_message_to_chat(chat, role, content):
@@ -95,7 +86,7 @@ def active_chat_keyboard():
     )
     return builder.as_markup()
 
-# ========== ЗАПРОСЫ К AI ==========
+# ========== AI (только текст) ==========
 async def ask_ai_text(chat, question):
     try:
         history = get_chat_history(chat)
@@ -116,37 +107,6 @@ async def ask_ai_text(chat, question):
     except Exception as e:
         return f"Ошибка: {e}"
 
-async def ask_ai_vision(chat, caption, photo_base64):
-    try:
-        history = get_chat_history(chat)
-        messages = [
-            {"role": "system", "content": "Ты — AI-ассистент, анализируй изображения и отвечай на русском."}
-        ] + history
-
-        user_message = []
-        if caption:
-            user_message.append({"type": "text", "text": caption})
-        user_message.append({
-            "type": "image_url",
-            "image_url": {"url": f"data:image/jpeg;base64,{photo_base64}"}
-        })
-        messages.append({"role": "user", "content": user_message})
-
-        r = await client.chat.completions.create(
-            model=VISION_MODEL,
-            messages=messages,
-            temperature=0.7,
-            max_tokens=2000
-        )
-        answer = r.choices[0].message.content.strip()
-
-        history_text = f"[Фото]{': ' + caption if caption else ''}"
-        add_message_to_chat(chat, "user", history_text)
-        add_message_to_chat(chat, "assistant", answer)
-        return answer
-    except Exception as e:
-        return f"Ошибка анализа фото: {e}"
-
 # ========== ОБРАБОТЧИКИ КОМАНД ==========
 @dp.message(Command("start"))
 async def start_cmd(m: types.Message):
@@ -160,11 +120,10 @@ async def start_cmd(m: types.Message):
 async def menu_cmd(m: types.Message):
     await start_cmd(m)
 
-# ========== ОБРАБОТЧИКИ CALLBACK ==========
+# ========== CALLBACK-ОБРАБОТЧИКИ ==========
 @dp.callback_query(F.data == "new_chat")
 async def cb_new_chat(call: types.CallbackQuery):
     user_id = call.from_user.id
-    # Создаём новый чат
     chat_id = uuid.uuid4().hex[:8]
     new_chat = {
         "id": chat_id,
@@ -175,7 +134,7 @@ async def cb_new_chat(call: types.CallbackQuery):
     user_chats[user_id].append(new_chat)
     active_chat[user_id] = chat_id
     await call.message.edit_text(
-        f"✅ Новый чат создан ({chat_id}).\nЗадайте вопрос или отправьте фото.",
+        f"✅ Новый чат создан ({chat_id}).\nЗадайте ваш вопрос.",
         reply_markup=active_chat_keyboard()
     )
 
@@ -187,7 +146,7 @@ async def cb_end_chat(call: types.CallbackQuery):
         chat["active"] = False
         active_chat.pop(user_id, None)
         await call.message.edit_text(
-            f"⏹ Чат {chat['id']} завершён и сохранён.\nСоздайте новый или посмотрите историю.",
+            f"⏹ Чат {chat['id']} завершён и сохранён.",
             reply_markup=main_menu_keyboard()
         )
     else:
@@ -200,8 +159,6 @@ async def cb_my_chats(call: types.CallbackQuery):
     if not chats:
         await call.message.edit_text("У вас пока нет чатов.", reply_markup=main_menu_keyboard())
         return
-
-    # Сортируем по дате создания (сверху новые)
     sorted_chats = sorted(chats, key=lambda x: x["created_at"], reverse=True)
     builder = InlineKeyboardBuilder()
     for c in sorted_chats:
@@ -218,20 +175,15 @@ async def cb_view_chat(call: types.CallbackQuery):
     if not chat:
         await call.answer("Чат не найден")
         return
-
     msgs = chat["messages"]
     if not msgs:
         await call.answer("Чат пуст")
         return
-
-    # Отправляем историю чата в виде пересланных сообщений
     await call.message.answer(f"📜 Чат {chat_id} от {chat['created_at']}:")
-    # Пересылаем по 3 сообщения, чтобы не упереться в лимиты
     for i in range(0, len(msgs), 3):
         chunk = msgs[i:i+3]
         text = "\n\n".join([f"{'👤' if m['role']=='user' else '🤖'}: {m['content'][:500]}" for m in chunk])
         await call.message.answer(text)
-    
     await call.message.answer("Конец истории.", reply_markup=main_menu_keyboard())
 
 @dp.callback_query(F.data == "back_to_menu")
@@ -241,20 +193,7 @@ async def cb_back_to_menu(call: types.CallbackQuery):
 # ========== ОБРАБОТЧИКИ СООБЩЕНИЙ ==========
 @dp.message(F.photo)
 async def handle_photo(m: types.Message):
-    user_id = m.from_user.id
-    chat = get_active_chat(user_id)
-    if not chat:
-        await m.answer("Сначала создайте или выберите активный чат через /menu", reply_markup=main_menu_keyboard())
-        return
-
-    wait = await m.answer("ЩА ДРУГ ПОГОДИ СЕКУНДУ...")
-    photo = m.photo[-1]
-    file = await bot.get_file(photo.file_id)
-    file_bytes = await bot.download_file(file.file_path)
-    photo_base64 = base64.b64encode(file_bytes.read()).decode('utf-8')
-    caption = m.caption if m.caption else ""
-    ans = await ask_ai_vision(chat, caption, photo_base64)
-    await wait.edit_text(ans)
+    await m.answer("📷 Я работаю только с текстом. Отправьте вопрос словами.")
 
 @dp.message(F.text)
 async def handle_text(m: types.Message):
@@ -262,15 +201,14 @@ async def handle_text(m: types.Message):
     chat = get_active_chat(user_id)
     if not chat:
         if m.text.startswith('/'):
-            return  # команды обработаются другими хендлерами
-        await m.answer("Сначала создайте или выберите активный чат через /menu", reply_markup=main_menu_keyboard())
+            return
+        await m.answer("Сначала создайте чат через /menu", reply_markup=main_menu_keyboard())
         return
-
     wait = await m.answer("ЩА ДРУГ ПОГОДИ СЕКУНДУ...")
     ans = await ask_ai_text(chat, m.text)
     await wait.edit_text(ans)
 
-# ========== INLINE (без активного чата) ==========
+# ========== INLINE ==========
 @dp.inline_query()
 async def inline(q: types.InlineQuery):
     txt = q.query.strip()
